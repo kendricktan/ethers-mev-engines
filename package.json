@@ -1,6 +1,6 @@
 {
   "name": "ethers-mev-engines",
-  "version": "0.0.1a",
+  "version": "0.0.2a",
   "url": "https://github.com/kendricktan/ethers-mev-engines/",
   "email": "kendricktrh@gmail.com",
   "devDependencies": {
@@ -9,12 +9,13 @@
     "chai": "^4.3.4",
     "ethereum-waffle": "^3.3.0",
     "hardhat": "^2.1.2",
-    "tsc": "^1.20150623.0",
     "ts-node": "^9.1.1",
+    "tsc": "^1.20150623.0",
     "typescript": "^4.2.3"
   },
   "license": "MIT",
   "dependencies": {
+    "@flashbots/ethers-provider-bundle": "^0.2.1",
     "ethers": "^5.0.32"
   },
   "files": [

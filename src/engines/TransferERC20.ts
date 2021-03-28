@@ -1,97 +1,185 @@
-import { BigNumber, Contract, providers } from "ethers";
-import { isAddress } from "ethers/lib/utils";
+import { FlashbotsBundleTransaction } from "@flashbots/ethers-provider-bundle";
+import { BigNumber, Contract, providers, Signer } from "ethers";
+import { formatUnits, isAddress } from "ethers/lib/utils";
 import { TransactionRequest } from "@ethersproject/abstract-provider";
 import { Base } from "./Base";
-import { IERC20 } from "../typechain/IERC20";
 
+import { ERC20 } from "../typechain/ERC20";
 import { abi as ERC20Abi } from "../abi/ERC20";
 
 export class TransferERC20 extends Base {
   private _provider: providers.JsonRpcProvider;
-  private _sender: string;
+  private _erc20Sender: Signer;
+  private _briber: Signer;
   private _recipient: string;
-  private _tokenContract: Contract;
+  private _erc20: ERC20;
 
   constructor(
     provider: providers.JsonRpcProvider,
-    sender: string,
+    erc20Sender: Signer,
+    briber: Signer,
     recipient: string,
-    _tokenAddress: string
+    erc20Address: string
   ) {
     super();
-    if (!isAddress(sender)) throw new Error("Bad Address");
-    if (!isAddress(recipient)) throw new Error("Bad Address");
-    this._sender = sender;
+    if (!isAddress(recipient)) throw new Error("Bad recipient address");
+    if (!isAddress(erc20Address)) throw new Error("Bad erc20 address");
+
+    this._erc20Sender = erc20Sender;
+
+    this._briber = briber;
     this._provider = provider;
     this._recipient = recipient;
-    this._tokenContract = new Contract(
-      _tokenAddress,
-      ERC20Abi,
-      provider
-    ) as IERC20;
+
+    this._erc20 = new Contract(erc20Address, ERC20Abi, provider) as ERC20;
   }
 
-  async description(): Promise<string> {
+  async getDescription(): Promise<string> {
+    const erc20Sender = await this.getERC20SenderAddress();
+
     return (
       "Transfer ERC20 balance " +
-      (await this.getTokenBalance(this._sender)).toString() +
+      (await this.getTokenBalance(erc20Sender).toString()) +
       " @ " +
-      this._tokenContract.address +
+      this._erc20.address +
       " from " +
-      this._sender +
+      erc20Sender +
       " to " +
       this._recipient
     );
   }
 
-  async getZeroGasPriceTx(): Promise<Array<TransactionRequest>> {
-    const tokenBalance = await this.getTokenBalance(this._sender);
+  async getZeroGasPriceTx(): Promise<Array<FlashbotsBundleTransaction>> {
+    const erc20Sender = await this.getERC20SenderAddress();
+
+    const tokenBalance = await this.getTokenBalance(
+      await this.getERC20SenderAddress()
+    );
+
     if (tokenBalance.eq(0)) {
       throw new Error(
-        `No Token Balance: ${this._sender} does not have any balance of ${this._tokenContract.address}`
+        `No Token Balance: ${erc20Sender} does not have any balance of ${this._erc20.address}`
       );
     }
     return [
       {
-        ...(await this._tokenContract.populateTransaction.transfer(
-          this._recipient,
-          tokenBalance
-        )),
-        gasPrice: BigNumber.from(0),
-        gasLimit: BigNumber.from(120000),
+        transaction: {
+          ...(await this._erc20.populateTransaction.transfer(
+            this._recipient,
+            tokenBalance
+          )),
+          gasPrice: BigNumber.from(0),
+          gasLimit: BigNumber.from(120000),
+        },
+        signer: this._erc20Sender,
       },
     ];
   }
 
   private async getTokenBalance(tokenHolder: string): Promise<BigNumber> {
-    return (await this._tokenContract.functions.balanceOf(tokenHolder))[0];
+    return (await this._erc20.functions.balanceOf(tokenHolder))[0];
   }
 
-  async getDonorTx(minerReward: BigNumber): Promise<TransactionRequest> {
-    const checkTargets = [this._tokenContract.address];
+  private async getERC20SenderAddress(): Promise<string> {
+    return this._erc20Sender.getAddress();
+  }
+
+  private async getBriberAddress(): Promise<string> {
+    return this._briber.getAddress();
+  }
+
+  async getDonorTxWithWETH(
+    minerReward: BigNumber
+  ): Promise<FlashbotsBundleTransaction> {
+    const erc20SenderAddress = await this.getERC20SenderAddress();
+    const briberAddress = await this.getBriberAddress();
+
+    const checkTargets = [this._erc20.address];
     const checkPayloads = [
-      this._tokenContract.interface.encodeFunctionData("balanceOf", [
-        this._recipient,
-      ]),
+      this._erc20.interface.encodeFunctionData("balanceOf", [this._recipient]),
     ];
     // recipient might ALREADY have a balance of these tokens. checkAndSend only checks the final state, so make sure the final state is precalculated
-    const expectedBalance = (await this.getTokenBalance(this._sender)).add(
-      await this.getTokenBalance(this._recipient)
-    );
+    const expectedBalance = (
+      await this.getTokenBalance(erc20SenderAddress)
+    ).add(await this.getTokenBalance(this._recipient));
     const checkMatches = [
-      this._tokenContract.interface.encodeFunctionResult("balanceOf", [
+      this._erc20.interface.encodeFunctionResult("balanceOf", [
+        expectedBalance,
+      ]),
+    ];
+
+    // Check WETH Balance
+    const balance = await Base.wethContract
+      .connect(this._briber)
+      .balanceOf(briberAddress);
+    if (balance.lt(minerReward)) {
+      throw new Error(
+        `Not enough WETH to bribe miner. Have ${formatUnits(
+          balance
+        )} WETH in account, need ${formatUnits(
+          minerReward
+        )} WETH to bribe miner`
+      );
+    }
+
+    // Check WETH allowance
+    const allowance = await Base.wethContract
+      .connect(this._briber)
+      .allowance(briberAddress, Base.mevBriberContract.address);
+
+    // Not enough allowance, we need to approve it
+    if (allowance.lt(minerReward)) {
+      console.log("Approving WETH spending for miner");
+      const tx = await Base.wethContract
+        .connect(this._briber)
+        .approve(Base.mevBriberContract.address, minerReward);
+      console.log("Waiting for tx to be mined....");
+      await tx.wait();
+    }
+
+    return {
+      transaction: {
+        ...(await Base.mevBriberContract.populateTransaction.check32BytesAndSendMultiWETH(
+          minerReward,
+          checkTargets,
+          checkPayloads,
+          checkMatches
+        )),
+        gasPrice: BigNumber.from(0),
+        gasLimit: BigNumber.from(400000),
+      },
+      signer: this._briber,
+    };
+  }
+
+  async getDonorTx(
+    minerReward: BigNumber
+  ): Promise<FlashbotsBundleTransaction> {
+    const checkTargets = [this._erc20.address];
+    const checkPayloads = [
+      this._erc20.interface.encodeFunctionData("balanceOf", [this._recipient]),
+    ];
+    // recipient might ALREADY have a balance of these tokens. checkAndSend only checks the final state, so make sure the final state is precalculated
+    const expectedBalance = (
+      await this.getTokenBalance(await this.getERC20SenderAddress())
+    ).add(await this.getTokenBalance(this._recipient));
+    const checkMatches = [
+      this._erc20.interface.encodeFunctionResult("balanceOf", [
         expectedBalance,
       ]),
     ];
     return {
-      ...(await Base.mevBriberContract.populateTransaction.check32BytesAndSendMulti(
-        checkTargets,
-        checkPayloads,
-        checkMatches
-      )),
-      value: minerReward,
-      gasPrice: BigNumber.from(0),
-      gasLimit: BigNumber.from(400000),
+      transaction: {
+        ...(await Base.mevBriberContract.populateTransaction.check32BytesAndSendMulti(
+          checkTargets,
+          checkPayloads,
+          checkMatches
+        )),
+        value: minerReward,
+        gasPrice: BigNumber.from(0),
+        gasLimit: BigNumber.from(600000),
+      },
+      signer: this._briber,
     };
   }
 }
