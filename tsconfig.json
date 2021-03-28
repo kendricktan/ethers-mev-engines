@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "target": "es2018",
+    "module": "commonjs",
+    "lib": ["es2018"],
+    "declaration": true,
+    "sourceMap": true,
+    "outDir": "./lib",
+    "rootDir": "./src",
+    "composite": true,
+    "tsBuildInfoFile": "./build/tsconfig.tsbuildinfo",
+
+    "strict": true,
+    "noImplicitAny": true,
+    "esModuleInterop": true
+  },
+  "include": ["src/**/*"]
+}
