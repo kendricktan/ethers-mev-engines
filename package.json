@@ -1,6 +1,6 @@
 {
   "name": "ethers-mev-engines",
-  "version": "0.0.3a",
+  "version": "0.0.4a",
   "url": "https://github.com/kendricktan/ethers-mev-engines/",
   "email": "kendricktrh@gmail.com",
   "devDependencies": {
