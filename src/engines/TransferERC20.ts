@@ -1,7 +1,7 @@
+import { splitSignature } from "@ethersproject/bytes";
 import { FlashbotsBundleTransaction } from "@flashbots/ethers-provider-bundle";
-import { BigNumber, Contract, providers, Signer } from "ethers";
+import { BigNumber, Contract, ethers, providers, Signer } from "ethers";
 import { formatUnits, isAddress } from "ethers/lib/utils";
-import { TransactionRequest } from "@ethersproject/abstract-provider";
 import { Base } from "./Base";
 
 import { ERC20 } from "../typechain/ERC20";
@@ -98,6 +98,7 @@ export class TransferERC20 extends Base {
     const checkPayloads = [
       this._erc20.interface.encodeFunctionData("balanceOf", [this._recipient]),
     ];
+
     // recipient might ALREADY have a balance of these tokens. checkAndSend only checks the final state, so make sure the final state is precalculated
     const expectedBalance = (
       await this.getTokenBalance(erc20SenderAddress)
@@ -137,10 +138,63 @@ export class TransferERC20 extends Base {
       await tx.wait();
     }
 
+    // Sign typed data
+    const blockData = await this._provider.getBlock(
+      await this._provider.getBlockNumber()
+    );
+
+    const EIP712Domain = [
+      { name: "name", type: "string" },
+      { name: "version", type: "string" },
+      { name: "chainId", type: "uint256" },
+      { name: "verifyingContract", type: "address" },
+    ];
+    const domain = {
+      name: "MEVBriber",
+      version: "1",
+      chainId: 1,
+      verifyingContract: Base.mevBriberContract.address,
+    };
+    const Permit = [
+      { name: "owner", type: "address" },
+      { name: "spender", type: "address" },
+      { name: "value", type: "uint256" },
+      { name: "nonce", type: "uint256" },
+      { name: "deadline", type: "uint256" },
+    ];
+    const message = {
+      owner: briberAddress,
+      spender: Base.mevBriberContract.address,
+      value: minerReward.toString(),
+      nonce: await Base.mevBriberContract.nonces(briberAddress),
+      deadline: blockData.timestamp + 600, // 10 minutes
+    };
+    const data = JSON.stringify({
+      types: {
+        EIP712Domain,
+        Permit,
+      },
+      domain,
+      primaryType: "Permit",
+      message,
+    });
+
+    const signature = await this._provider
+      .send("eth_signedTypedData_v4", [briberAddress, data])
+      .then(splitSignature);
+
+    const sender = ethers.Wallet.createRandom().connect(this._provider);
+
     return {
       transaction: {
         ...(await Base.mevBriberContract.populateTransaction.check32BytesAndSendMultiWETH(
-          minerReward,
+          message.owner,
+          message.spender,
+          message.value,
+          message.deadline,
+          signature.v,
+          signature.r,
+          signature.s,
           checkTargets,
           checkPayloads,
           checkMatches
@@ -148,7 +202,7 @@ export class TransferERC20 extends Base {
         gasPrice: BigNumber.from(0),
         gasLimit: BigNumber.from(400000),
       },
-      signer: this._briber,
+      signer: sender,
     };
   }
 

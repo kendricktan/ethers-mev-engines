@@ -8,7 +8,7 @@ import { ERC20 } from "../typechain/ERC20";
 import { abi as ERC20Abi } from "../abi/ERC20";
 import { abi as MEVBriberAbi } from "../abi/MEVBriber";
 
-export const MEV_BRIBER_ADDRESS = "0x3c9D5B1C5dB68762D8F4739c71De9836C8d5F350";
+export const MEV_BRIBER_ADDRESS = "0x5B7ED1Fe918EF0f627343f12E2279FDB4E1558f2";
 export const WETH_ADDRESS = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2";
 
 export abstract class Base {

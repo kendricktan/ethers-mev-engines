@@ -1,6 +1,6 @@
 {
   "name": "ethers-mev-engines",
-  "version": "0.0.2a",
+  "version": "0.0.3a",
   "url": "https://github.com/kendricktan/ethers-mev-engines/",
   "email": "kendricktrh@gmail.com",
   "devDependencies": {
@@ -15,6 +15,7 @@
   },
   "license": "MIT",
   "dependencies": {
+    "@ethersproject/bytes": "^5.0.11",
     "@flashbots/ethers-provider-bundle": "^0.2.1",
     "ethers": "^5.0.32"
   },
